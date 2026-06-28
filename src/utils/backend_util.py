@@ -7,7 +7,8 @@ import httpx
 from src.config import settings
 
 
-async def resolve_user_context(token: str | None) -> dict[str, Any]:
+async def resolve_user_context_util(token: str | None) -> dict[str, Any]:
+    """Resolve the yaai cookie through Java backend AgentController."""
     if not token:
         return {"authenticated": False, "userId": None, "role": None, "roles": []}
 

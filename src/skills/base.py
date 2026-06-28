@@ -23,22 +23,29 @@ def _scope_matches(scope: tuple[str, ...], value: str | None) -> bool:
     return str(value).strip().lower() in normalized
 
 
+def _login_value(authenticated: bool | None) -> str | None:
+    if authenticated is None:
+        return None
+    return "login" if authenticated else "anonymous"
+
+
 @dataclass(frozen=True)
 class SkillSpec:
     name: str
     description: str
     summary: str
     allowed_agents: tuple[str, ...]
+    login: tuple[str, ...] = ("*",)
     platforms: tuple[str, ...] = ("*",)
     roles: tuple[str, ...] = ("*",)
     current_pages: tuple[str, ...] = ("*",)
     page_types: tuple[str, ...] = ("*",)
-    tags: tuple[str, ...] = ()
     version: str = "0.1.0"
     prompt_template: str = ""
     prompt_loader: Callable[[], str] | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "login", _normalize_scope(self.login))
         object.__setattr__(self, "platforms", _normalize_scope(self.platforms))
         object.__setattr__(self, "roles", _normalize_scope(self.roles))
         object.__setattr__(self, "current_pages", _normalize_scope(self.current_pages))
@@ -55,13 +62,15 @@ class SkillSpec:
     def matches(
         self,
         *,
+        authenticated: bool | None,
         platform: str | None,
         role: str | None,
         current_page: str | None,
         page_type: str | None,
     ) -> bool:
         return (
-            _scope_matches(self.platforms, platform)
+            _scope_matches(self.login, _login_value(authenticated))
+            and _scope_matches(self.platforms, platform)
             and _scope_matches(self.roles, role)
             and _scope_matches(self.current_pages, current_page)
             and _scope_matches(self.page_types, page_type)
@@ -71,14 +80,6 @@ class SkillSpec:
         return {
             "name": self.name,
             "description": self.description,
-            "summary": self.summary,
-            "allowedAgents": self.allowed_agents,
-            "platforms": self.platforms,
-            "roles": self.roles,
-            "currentPages": self.current_pages,
-            "pageTypes": self.page_types,
-            "tags": self.tags,
-            "version": self.version,
         }
 
     def load_prompt(self) -> str:

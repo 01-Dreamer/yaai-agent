@@ -13,6 +13,7 @@ class RuntimeContext:
     role: str | None = None
     roles: list[str] = field(default_factory=list)
     authenticated: bool = False
+    auth_token: str | None = None
     request_id: str | None = None
     assistant_message_id: str | None = None
     attachments: list[dict[str, Any]] = field(default_factory=list)

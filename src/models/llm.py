@@ -23,6 +23,11 @@ def _model_config(tier: ModelTier) -> ChatModelConfig:
         return ChatModelConfig(settings.large_model_url, settings.large_model_name, settings.large_model_key)
     if tier == "vision":
         return ChatModelConfig(settings.vision_model_url, settings.vision_model_name, settings.vision_model_key)
+    if tier == "embedding":
+        base_url = settings.embedding_model_url
+        if base_url.endswith("/embeddings"):
+            base_url = base_url[: -len("/embeddings")]
+        return ChatModelConfig(base_url, settings.embedding_model_name, settings.embedding_model_key)
     return ChatModelConfig(settings.small_model_url, settings.small_model_name, settings.small_model_key)
 
 
@@ -84,3 +89,15 @@ async def vision_describe_image(image_url: str, prompt: str) -> str:
         temperature=0.1,
     )
     return response.choices[0].message.content or ""
+
+
+async def embed_texts(texts: list[str]) -> list[list[float]]:
+    config = _model_config("embedding")
+    if not config.base_url or not config.model or not config.api_key:
+        raise RuntimeError("embedding model is not configured")
+    if not texts:
+        return []
+
+    client = AsyncOpenAI(api_key=config.api_key, base_url=config.base_url)
+    response = await client.embeddings.create(model=config.model, input=texts)
+    return [list(item.embedding) for item in response.data]

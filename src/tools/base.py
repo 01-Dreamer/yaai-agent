@@ -11,11 +11,8 @@ class ToolSpec:
     name: str
     description: str
     namespace: str
-    risk_level: str = "low"
-    expose_to_llm: bool = True
     platforms: tuple[str, ...] = ()
     roles: tuple[str, ...] = ()
-    tags: tuple[str, ...] = ()
     capabilities: tuple[str, ...] = ()
     input_schema: dict[str, Any] = field(default_factory=dict)
 
@@ -31,7 +28,6 @@ class ToolResult:
 class Tool(Protocol):
     name: str
     description: str
-    expose_to_llm: bool
     spec: ToolSpec | None
 
     async def run(self, context: RuntimeContext, **kwargs: Any) -> ToolResult:

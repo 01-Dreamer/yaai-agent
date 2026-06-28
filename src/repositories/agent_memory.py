@@ -213,6 +213,155 @@ class AgentMemoryRepository:
                 )
                 return int(cursor.lastrowid)
 
+    async def load_recent_context(
+        self,
+        *,
+        session_id: int | None,
+        user_id: int | None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        if session_id is None:
+            return []
+        limit = _normalize_limit(limit, default=20, maximum=100)
+        await self.connect()
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                await cursor.execute(
+                    """
+                    SELECT id, role, content, attachments, created_at
+                    FROM agent_memory
+                    WHERE session_id = %s
+                      AND user_id <=> %s
+                    ORDER BY id DESC
+                    LIMIT %s
+                    """,
+                    (session_id, user_id, limit),
+                )
+                rows = await cursor.fetchall()
+        return [self._format_memory_row(row) for row in reversed(rows)]
+
+    async def load_full_memory_context(
+        self,
+        *,
+        session_id: int | None,
+        user_id: int | None,
+    ) -> dict[str, Any]:
+        if session_id is None:
+            return {"summary": "", "memoryUpdatedAt": None, "messages": []}
+        await self.connect()
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                await cursor.execute(
+                    """
+                    SELECT memory_content, memory_updated_at
+                    FROM agent_session
+                    WHERE id = %s
+                      AND user_id <=> %s
+                    LIMIT 1
+                    """,
+                    (session_id, user_id),
+                )
+                session = await cursor.fetchone()
+                if not session:
+                    return {"summary": "", "memoryUpdatedAt": None, "messages": []}
+                memory_updated_at = session.get("memory_updated_at")
+                await cursor.execute(
+                    """
+                    SELECT id, role, content, attachments, created_at
+                    FROM agent_memory
+                    WHERE session_id = %s
+                      AND user_id <=> %s
+                      AND (%s IS NULL OR created_at > %s)
+                    ORDER BY id ASC
+                    """,
+                    (session_id, user_id, memory_updated_at, memory_updated_at),
+                )
+                rows = await cursor.fetchall()
+        return {
+            "summary": session.get("memory_content") or "",
+            "memoryUpdatedAt": memory_updated_at.isoformat() if memory_updated_at else None,
+            "messages": [self._format_memory_row(row) for row in rows],
+        }
+
+    async def count_uncompressed_memories(
+        self,
+        *,
+        session_id: int | None,
+        user_id: int | None,
+    ) -> int:
+        if session_id is None:
+            return 0
+        await self.connect()
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                await cursor.execute(
+                    """
+                    SELECT memory_updated_at
+                    FROM agent_session
+                    WHERE id = %s
+                      AND user_id <=> %s
+                    LIMIT 1
+                    """,
+                    (session_id, user_id),
+                )
+                session = await cursor.fetchone()
+                if not session:
+                    return 0
+                memory_updated_at = session.get("memory_updated_at")
+                await cursor.execute(
+                    """
+                    SELECT COUNT(*) AS total
+                    FROM agent_memory
+                    WHERE session_id = %s
+                      AND user_id <=> %s
+                      AND (%s IS NULL OR created_at > %s)
+                    """,
+                    (session_id, user_id, memory_updated_at, memory_updated_at),
+                )
+                row = await cursor.fetchone()
+        return int(row.get("total") or 0)
+
+    async def update_session_summary(
+        self,
+        *,
+        session_id: int,
+        user_id: int | None,
+        memory_content: str,
+    ) -> bool:
+        await self.connect()
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    UPDATE agent_session
+                    SET memory_content = %s,
+                        memory_updated_at = NOW()
+                    WHERE id = %s
+                      AND user_id <=> %s
+                    """,
+                    (memory_content, session_id, user_id),
+                )
+                return cursor.rowcount > 0
+
+    def _format_memory_row(self, row: dict[str, Any]) -> dict[str, Any]:
+        attachments = []
+        if row.get("attachments"):
+            try:
+                attachments = json.loads(row["attachments"])
+            except Exception:
+                attachments = []
+        return {
+            "id": int(row["id"]),
+            "role": row["role"],
+            "content": row["content"],
+            "attachments": attachments,
+            "createdAt": row["created_at"].isoformat() if row.get("created_at") else None,
+        }
+
     async def update_session_title(self, *, session_id: int, title: str) -> bool:
         await self.connect()
         assert self._pool is not None

@@ -18,6 +18,8 @@ from src.agents.base import AgentRequest, AgentResponse, AgentSpec
 from src.config import settings
 from src.core.context import RuntimeContext
 from src.core.oss import upload_to_oss
+from src.core.runtime import runtime
+from src.core.tool_prompt import render_agent_tool_prompt
 from src.models.llm import chat_complete, vision_describe_image
 from src.prompts.system import FILE_ANALYSIS_AGENT_PROMPT
 
@@ -80,11 +82,10 @@ class ExtractedImage(dict[str, Any]):
 
 class FileAnalysisAgent:
     spec = AgentSpec(
-        name="file_analysis",
+        name="file_analysis_agent",
         description="用 Python 解析文件内容，并调用大模型总结给主 Agent",
-        tools=("file.download", "file.extract_text", "file.extract_images", "file.summarize", "vision.describe_image"),
+        tools=("file.extract_file_info_tool", "vision.extract_image_info_tool"),
         model_tier="large",
-        tags=("file", "attachment", "vision"),
         capabilities=("file_parse", "image_extract", "summarize"),
     )
 
@@ -95,8 +96,17 @@ class FileAnalysisAgent:
 
         parts = ["文件分析 Agent 结果："]
         for index, attachment in enumerate(file_attachments, start=1):
-            result = await self._analyze_one(context, attachment, user_input)
-            parts.append(f"{index}. {result}")
+            result = await runtime.run_tool(
+                context,
+                "file.extract_file_info_tool",
+                caller_agent=self.spec.name,
+                attachment=attachment,
+                user_input=user_input,
+            )
+            if result.success:
+                parts.append(f"{index}. {result.summary or result.data.get('summary') or ''}")
+            else:
+                parts.append(f"{index}. 文件解析失败：{result.error or 'unknown error'}")
         return "\n\n".join(parts)
 
     async def run(self, request: AgentRequest) -> AgentResponse:
@@ -153,7 +163,8 @@ class FileAnalysisAgent:
             "请用中文给主 Agent 输出结构化文件分析结果，包含：文件主题、关键事实、图片中的关键信息、"
             "与用户问题相关的信息、可直接引用的结论。"
         )
-        return await chat_complete(FILE_ANALYSIS_AGENT_PROMPT, user_prompt, tier="large")
+        system_prompt = f"{FILE_ANALYSIS_AGENT_PROMPT}\n\n{render_agent_tool_prompt(self.spec)}"
+        return await chat_complete(system_prompt, user_prompt, tier="large")
 
     async def _analyze_embedded_images(self, attachment: dict[str, Any], path: Path) -> str:
         images = self._extract_embedded_images(attachment, path)

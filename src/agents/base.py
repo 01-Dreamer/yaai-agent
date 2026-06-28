@@ -32,7 +32,6 @@ class AgentSpec:
     skills: tuple[str, ...] = ()
     platforms: tuple[str, ...] = ()
     roles: tuple[str, ...] = ()
-    tags: tuple[str, ...] = ()
     capabilities: tuple[str, ...] = ()
     version: str = "0.1.0"
 

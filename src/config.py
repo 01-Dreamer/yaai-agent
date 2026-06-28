@@ -25,11 +25,16 @@ def _load_env_file() -> None:
 _load_env_file()
 
 
+def _project_path(value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else PROJECT_DIR / path
+
+
 class Settings:
     agent_host: str = os.getenv("AGENT_HOST", "0.0.0.0")
     agent_port: int = int(os.getenv("AGENT_PORT", "8080"))
     backend_base_url: str = os.getenv("BACKEND_BASE_URL", "http://localhost:9876").rstrip("/")
-    agent_token: str = os.getenv("AGENT_TOKEN", "yaai-agent-4967332452c59dfcd51a180b90b865a8")
+    agent_token: str = os.getenv("AGENT_TOKEN") or os.getenv("X-AGENT-TOKEN", "yaai-agent-4967332452c59dfcd51a180b90b865a8")
     ping_interval_seconds: int = int(os.getenv("WS_PING_INTERVAL_SECONDS", "25"))
     pong_timeout_seconds: int = int(os.getenv("WS_PONG_TIMEOUT_SECONDS", "60"))
     small_model_url: str = os.getenv("SMALL_MODEL_URL", "").rstrip("/")
@@ -41,9 +46,18 @@ class Settings:
     vision_model_url: str = os.getenv("VISION_MODEL_URL", "").rstrip("/")
     vision_model_name: str = os.getenv("VISION_MODEL_NAME", "")
     vision_model_key: str = os.getenv("VISION_MODEL_KEY", "")
+    image_model_url: str = os.getenv("IMAGE_MODEL_URL", "").rstrip("/")
+    image_model_name: str = os.getenv("IMAGE_MODEL_NAME", "")
+    image_model_key: str = os.getenv("IMAGE_MODEL_KEY", "")
     embedding_model_url: str = os.getenv("EMBEDDING_MODEL_URL", "").rstrip("/")
     embedding_model_name: str = os.getenv("EMBEDDING_MODEL_NAME", "")
     embedding_model_key: str = os.getenv("EMBEDDING_MODEL_KEY", "")
+    knowledge_doc_dir: Path = _project_path(os.getenv("KNOWLEDGE_DOC_DIR", str(PROJECT_DIR / "resources" / "knowledge_doc")))
+    rag_chunk_size: int = int(os.getenv("RAG_CHUNK_SIZE", "900"))
+    rag_chunk_overlap: int = int(os.getenv("RAG_CHUNK_OVERLAP", "120"))
+    tavily_api_key: str = os.getenv("TAVILY_API_KEY", "")
+    baidu_search_api_key: str = os.getenv("BAIDU_SEARCH_API_KEY", "")
+    aliyun_search_api_key: str = os.getenv("ALIYUN_SEARCH_API_KEY", "")
     max_upload_size_mb: int = int(os.getenv("AGENT_MAX_UPLOAD_SIZE_MB", "512"))
     aliyun_oss_access_key_id: str = os.getenv("ALIYUN_OSS_ACCESS_KEY_ID", "")
     aliyun_oss_access_key_secret: str = os.getenv("ALIYUN_OSS_ACCESS_KEY_SECRET", "")
@@ -76,6 +90,16 @@ class Settings:
     redis_password: str = os.getenv("REDIS_PASSWORD", "")
     redis_prefix: str = os.getenv("REDIS_PREFIX", "yaai:agent")
     chat_buffer_ttl_seconds: int = int(os.getenv("CHAT_BUFFER_TTL_SECONDS", "3600"))
+    neo4j_uri: str = os.getenv("NEO4J_URI", "")
+    neo4j_username: str = os.getenv("NEO4J_USERNAME", "")
+    neo4j_password: str = os.getenv("NEO4J_PASSWORD", "")
+    neo4j_database: str = os.getenv("NEO4J_DATABASE", "neo4j")
+    qq_email_host: str = os.getenv("QQ_EMAIL_HOST", "")
+    qq_email_username: str = os.getenv("QQ_EMAIL_USERNAME", "")
+    qq_email_auth: str = os.getenv("QQ_EMAIL_AUTH", "")
+    qq_email_port: int = int(os.getenv("QQ_EMAIL_PORT", "587"))
+    qq_bot_appid: str = os.getenv("QQ_BOT_APPID", "")
+    qq_bot_appsecret: str = os.getenv("QQ_BOT_APPSECRET", "")
 
 
 settings = Settings()

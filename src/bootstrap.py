@@ -1,19 +1,37 @@
 from __future__ import annotations
 
+from src.agents.browser_agent import BrowserAgent
+from src.agents.email_sender_agent import EmailSenderAgent
 from src.agents.file_analysis_agent import FileAnalysisAgent
-from src.agents.frontend_control_agent import FrontendControlAgent
-from src.agents.main_agent import MainAgent
+from src.agents.image_generation_agent import ImageGenerationAgent
+from src.agents.supervisor_agent import SupervisorAgent
 from src.agents.memory_compression_agent import MemoryCompressionAgent
+from src.agents.response_agent import ResponseAgent
 from src.agents.retrieval_agent import RetrievalAgent
+from src.agents.web_search_agent import WebSearchAgent
+from src.agents.url_content_agent import UrlContentAgent
+from src.agents.yaai_business_agent import YaaiBusinessAgent
 from src.core.registry import agent_registry, skill_registry, tool_registry
-from src.skills.catalog import SKILLS
-from src.tools.backend import BackendTool
-from src.tools.frontend import FrontendActionTool
-from src.tools.memory import MemoryTool
-from src.tools.retrieval import RetrievalTool
+from src.skills.browser_operation_skill import browser_operation_skill
+from src.skills.content_creation_skill import content_creation_skill
+from src.skills.fresh_web_search_skill import fresh_web_search_skill
+from src.skills.knowledge_qa_skill import knowledge_qa_skill
+from src.skills.memory_context_skill import memory_context_skill
+from src.skills.yaai_business_skill import yaai_business_skill
+from src.tools.yaai_business_tool import YaaiBusinessTool
+from src.tools.browser_action_tool import BrowserActionTool
+from src.tools.email_sender_tool import EmailSenderTool
+from src.tools.file_info_tool import FileInfoTool
+from src.tools.graph_query_tool import GraphQueryTool
+from src.tools.image_generation_tool import ImageGenerationTool
+from src.tools.memory_tool import MemoryTool
+from src.tools.rag_search_tool import RagSearchTool
+from src.tools.web_search_tool import WebSearchTool
+from src.tools.skill_activation_tool import SkillActivationTool
+from src.tools.url_content_tool import UrlContentTool
 
 
-def _register_agent(handler, *, expose_to_llm: bool = True) -> None:
+def _register_agent(handler) -> None:
     spec = handler.spec
     if agent_registry.has(spec.name):
         return
@@ -23,15 +41,13 @@ def _register_agent(handler, *, expose_to_llm: bool = True) -> None:
         description=spec.description,
         platforms=set(spec.platforms),
         roles=set(spec.roles),
-        tags=set(spec.tags),
         capabilities=set(spec.capabilities),
         metadata={"tools": spec.tools, "skills": spec.skills, "modelTier": spec.model_tier},
         version=spec.version,
-        expose_to_llm=expose_to_llm,
     )
 
 
-def _register_tool(name: str, handler, *, description: str = "", expose_to_llm: bool | None = None, **metadata) -> None:
+def _register_tool(name: str, handler, *, description: str = "", **metadata) -> None:
     if tool_registry.has(name):
         return
     spec = getattr(handler, "spec", None)
@@ -41,11 +57,8 @@ def _register_tool(name: str, handler, *, description: str = "", expose_to_llm: 
         description=description or getattr(spec, "description", "") or getattr(handler, "description", ""),
         platforms=set(getattr(spec, "platforms", ())),
         roles=set(getattr(spec, "roles", ())),
-        tags=set(getattr(spec, "tags", ())),
         capabilities=set(getattr(spec, "capabilities", ())),
         metadata=metadata or {"namespace": getattr(spec, "namespace", name.split(".", 1)[0])},
-        risk_level=getattr(spec, "risk_level", "low"),
-        expose_to_llm=getattr(spec, "expose_to_llm", True) if expose_to_llm is None else expose_to_llm,
     )
 
 
@@ -58,10 +71,10 @@ def _register_skill(skill) -> None:
         description=skill.description,
         platforms=set(skill.platforms),
         roles=set(skill.roles),
-        tags=set(skill.tags),
         metadata={
             "summary": skill.summary,
             "allowedAgents": skill.allowed_agents,
+            "login": skill.login,
             "currentPages": skill.current_pages,
             "pageTypes": skill.page_types,
         },
@@ -70,37 +83,59 @@ def _register_skill(skill) -> None:
 
 
 def bootstrap_registries() -> None:
-    _register_agent(MainAgent(), expose_to_llm=False)
+    _register_agent(SupervisorAgent())
     _register_agent(RetrievalAgent())
     _register_agent(FileAnalysisAgent())
-    _register_agent(FrontendControlAgent())
+    _register_agent(BrowserAgent())
     _register_agent(MemoryCompressionAgent())
+    _register_agent(WebSearchAgent())
+    _register_agent(UrlContentAgent())
+    _register_agent(EmailSenderAgent())
+    _register_agent(ImageGenerationAgent())
+    _register_agent(ResponseAgent())
+    _register_agent(YaaiBusinessAgent())
 
-    for action in ["navigate", "fill", "highlight"]:
-        _register_tool(f"frontend.{action}", FrontendActionTool(action), description=f"Frontend action: {action}")
+    for action in ["navigate", "fill", "highlight", "inspect_html"]:
+        _register_tool(f"browser.{action}_tool", BrowserActionTool(action))
 
-    _register_tool(
-        "backend.user_context",
-        BackendTool("backend.user_context", "/agent/user-context"),
-        description="Resolve user context through yaai-backend AgentController",
-    )
+    _register_tool("memory.import_full_memory_tool", MemoryTool(), description=MemoryTool.description)
+    _register_tool("skill.activate_skill_tool", SkillActivationTool(), description=SkillActivationTool.description)
 
-    for name in ["memory.load_session", "memory.load_recent", "memory.update_session_summary"]:
-        _register_tool(name, MemoryTool(name), description=name)
+    _register_tool("rag.search_documents_tool", RagSearchTool("semantic"))
+    _register_tool("rag.keyword_search_tool", RagSearchTool("keyword"))
+    _register_tool("graph.query_tool", GraphQueryTool(), description=GraphQueryTool.description)
 
-    for name in [
-        "rag.search_documents",
-        "graph.query",
-        "file.download",
-        "file.extract_text",
-        "file.extract_images",
-        "file.summarize",
-        "vision.describe_image",
+    for kind in ["file", "image"]:
+        tool = FileInfoTool(kind)
+        _register_tool(tool.name, tool, description=tool.description)
+
+    for provider in ["tavily", "aliyun", "baidu"]:
+        _register_tool(f"web_search.{provider}_tool", WebSearchTool(provider))
+
+    for action in ["extract", "crawl"]:
+        _register_tool(f"url_content.{action}_tool", UrlContentTool(action))
+
+    for action in [
+        "search_news",
+        "get_member_profile",
+        "list_committees",
+        "get_committee_detail",
+        "list_member_audits",
+        "get_operation_logs",
+        "create_payment_url",
     ]:
-        _register_tool(name, RetrievalTool(name), description=name)
+        tool = YaaiBusinessTool(action)
+        _register_tool(tool.name, tool, description=tool.description)
 
-    for name in ["mq.sensitive_check", "system.revoke_message"]:
-        _register_tool(name, RetrievalTool(name), description=name, expose_to_llm=False)
+    _register_tool("email.send_tool", EmailSenderTool(), description=EmailSenderTool.description)
+    _register_tool("image.generate_tool", ImageGenerationTool(), description=ImageGenerationTool.description)
 
-    for skill in SKILLS:
+    for skill in [
+        browser_operation_skill,
+        knowledge_qa_skill,
+        fresh_web_search_skill,
+        yaai_business_skill,
+        content_creation_skill,
+        memory_context_skill,
+    ]:
         _register_skill(skill)

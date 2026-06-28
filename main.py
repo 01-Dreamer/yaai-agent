@@ -12,10 +12,9 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.agents.main_agent import MainAgent
+from src.agents.supervisor_agent import SupervisorAgent
 from src.bootstrap import bootstrap_registries
 from src.config import settings
-from src.core.backend import resolve_user_context
 from src.core.context import RuntimeContext
 from src.core.oss import upload_fileobj_to_oss
 from src.core.registry import agent_registry, tool_registry
@@ -23,7 +22,9 @@ from src.repositories.agent_memory import agent_memory_repository
 from src.security.chat_buffer import chat_redis_buffer
 from src.security.sensitive_matcher import sensitive_matcher
 from src.security.sensitive_mq import ChatAuditMessage, chat_audit_mq_service
-from src.tools.frontend import FrontendActionTool
+from src.tools.browser_action_tool import BrowserActionTool
+from src.utils.backend_util import resolve_user_context_util
+from src.utils.memory_util import MemoryCompressionUtil
 
 app = FastAPI(title="YAAI Agent")
 app.add_middleware(
@@ -57,7 +58,7 @@ def _cookie_token(websocket: WebSocket) -> str | None:
 
 async def _http_user_context(request: Request) -> dict[str, Any]:
     token = request.cookies.get("yaai")
-    user_context = await resolve_user_context(token)
+    user_context = await resolve_user_context_util(token)
     if not user_context.get("authenticated"):
         raise HTTPException(status_code=401, detail="请先登录后使用 YAAI 助手")
     return user_context
@@ -82,6 +83,37 @@ async def _insert_memory_safe(**kwargs: Any) -> int | None:
         return await agent_memory_repository.insert_memory(**kwargs)
     except Exception:
         return None
+
+
+async def _maybe_trigger_memory_compression(*, session_id: int | None, user_id: int | None, inserted_count: int) -> None:
+    if session_id is None or inserted_count <= 0:
+        return
+    try:
+        total = await chat_redis_buffer.increment_uncompressed_memory_count(
+            session_id=session_id,
+            increment=inserted_count,
+            initial_loader=lambda: agent_memory_repository.count_uncompressed_memories(
+                session_id=session_id,
+                user_id=user_id,
+            ),
+        )
+        if total < 50:
+            return
+        result = await MemoryCompressionUtil().run(
+            RuntimeContext(
+                connection_id="mq",
+                platform="system",
+                session_id=session_id,
+                user_id=user_id,
+                authenticated=True,
+            ),
+            session_id=session_id,
+            user_id=user_id,
+        )
+        if result.success:
+            await chat_redis_buffer.reset_uncompressed_memory_count(session_id=session_id)
+    except Exception:
+        return
 
 
 async def _ensure_session_safe(state: ConnectionState, content: str) -> None:
@@ -159,6 +191,7 @@ async def _flush_request_to_mysql(request_id: str) -> None:
         except Exception:
             session_id = None
 
+    inserted_count = 0
     for event in events:
         stage = event.get("stage")
         if stage == "user_input":
@@ -167,13 +200,16 @@ async def _flush_request_to_mysql(request_id: str) -> None:
             role = "assistant"
         else:
             role = "sub_agent"
-        await _insert_memory_safe(
+        inserted_id = await _insert_memory_safe(
             session_id=session_id,
             user_id=user_id,
             role=role,
             content=str(event.get("content") or ""),
             attachments=event.get("attachments") or None,
         )
+        if inserted_id is not None:
+            inserted_count += 1
+    await _maybe_trigger_memory_compression(session_id=session_id, user_id=user_id, inserted_count=inserted_count)
     await chat_redis_buffer.clear(request_id)
 
 
@@ -208,18 +244,18 @@ async def _send_frontend_action(context: RuntimeContext, action: str, payload: d
         return {"success": False, "error": "frontend action timeout"}
 
 
-def _bind_frontend_tools() -> None:
-    for name in ["frontend.navigate", "frontend.fill", "frontend.highlight"]:
+def _bind_browser_tools() -> None:
+    for name in ["browser.navigate_tool", "browser.fill_tool", "browser.highlight_tool", "browser.inspect_html_tool"]:
         try:
             tool = tool_registry.get(name).handler
         except KeyError:
             continue
-        if isinstance(tool, FrontendActionTool):
+        if isinstance(tool, BrowserActionTool):
             tool.bind_sender(_send_frontend_action)
 
 
 bootstrap_registries()
-_bind_frontend_tools()
+_bind_browser_tools()
 
 
 async def _ping_loop(state: ConnectionState) -> None:
@@ -270,9 +306,9 @@ async def _handle_user_message(state: ConnectionState, message: dict[str, Any]) 
     )
 
     await _send(state, "assistant.message.start", {"requestId": request_id})
-    agent = agent_registry.get("main").handler
-    if not isinstance(agent, MainAgent):
-        await _send(state, "error", {"requestId": request_id, "message": "main agent unavailable"})
+    agent = agent_registry.get("supervisor_agent").handler
+    if not isinstance(agent, SupervisorAgent):
+        await _send(state, "error", {"requestId": request_id, "message": "supervisor agent unavailable"})
         return
 
     assistant_content_parts: list[str] = []
@@ -433,7 +469,7 @@ async def agent_ws(websocket: WebSocket) -> None:
     await websocket.accept()
     connection_id = str(uuid.uuid4())
     token = _cookie_token(websocket)
-    user_context = await resolve_user_context(token)
+    user_context = await resolve_user_context_util(token)
     if not user_context.get("authenticated"):
         await websocket.send_json({"eventType": "auth.required", "payload": {"message": "请先登录后使用 YAAI 助手"}})
         await websocket.close(code=4401, reason="login required")
@@ -448,6 +484,7 @@ async def agent_ws(websocket: WebSocket) -> None:
         role=user_context.get("role"),
         roles=user_context.get("roles") or [],
         authenticated=True,
+        auth_token=token,
     )
     state = ConnectionState(websocket, context)
     connections[connection_id] = state

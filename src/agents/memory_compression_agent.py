@@ -6,10 +6,9 @@ from src.core.context import RuntimeContext
 
 class MemoryCompressionAgent:
     spec = AgentSpec(
-        name="memory_compression",
+        name="memory_compression_agent",
         description="压缩 session 记忆并更新 agent_session.memory_content",
-        tools=("memory.load_recent", "memory.update_session_summary"),
-        tags=("memory", "compression"),
+        tools=(),
         capabilities=("compress", "summarize"),
     )
 

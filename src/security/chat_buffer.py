@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import redis.asyncio as redis
@@ -31,6 +32,9 @@ class ChatRedisBuffer:
 
     def _key(self, request_id: str, suffix: str) -> str:
         return f"{settings.redis_prefix}:chat:{request_id}:{suffix}"
+
+    def _memory_count_key(self, session_id: int) -> str:
+        return f"{settings.redis_prefix}:memory:session:{session_id}:uncompressed_count"
 
     async def append_event(self, event: Any) -> None:
         await self.connect()
@@ -77,6 +81,25 @@ class ChatRedisBuffer:
             self._key(request_id, "meta"),
             self._key(request_id, "status"),
         )
+
+    async def increment_uncompressed_memory_count(
+        self,
+        *,
+        session_id: int,
+        increment: int,
+        initial_loader: Callable[[], Awaitable[int]],
+    ) -> int:
+        await self.connect()
+        assert self._client is not None
+        key = self._memory_count_key(session_id)
+        if not await self._client.exists(key):
+            await self._client.set(key, await initial_loader())
+        return int(await self._client.incrby(key, increment))
+
+    async def reset_uncompressed_memory_count(self, *, session_id: int) -> None:
+        await self.connect()
+        assert self._client is not None
+        await self._client.set(self._memory_count_key(session_id), 0)
 
 
 chat_redis_buffer = ChatRedisBuffer()
